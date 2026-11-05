@@ -1,0 +1,20 @@
+
+services:
+  app:
+    image: node:24-bookworm
+    working_dir: /workspace
+    init: true
+
+    ports:
+      - "127.0.0.1:3000:3000"
+
+    volumes:
+      - .:/workspace
+      - node_modules:/workspace/node_modules
+      - next_cache:/workspace/.next
+
+    command: npm run dev -- --hostname 0.0.0.0
+
+volumes:
+  node_modules:
+  next_cache:
