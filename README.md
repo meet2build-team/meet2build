@@ -30,6 +30,18 @@ docker compose run --rm app npm ci
 docker compose up
 ```
 
+## Потвърждение на имейл при регистрация
+
+Локално потвърждението е изключено (`enable_confirmations = false` в `supabase/config.toml`), затова `POST /api/auth/sign-up` създава сесия веднага.
+
+Когато потвърждението е включено, шаблонът **Confirm signup** в Supabase (Authentication → Email Templates) трябва да сочи към `/auth/confirm`, а **Site URL** трябва да е адресът на приложението:
+
+```html
+<a href="{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=email">Потвърди имейла</a>
+```
+
+С `&next=/път` потребителят се пренасочва към друга страница от приложението след потвърждение. Външни адреси се игнорират. При липсващ, невалиден или изтекъл линк пренасочването е към `/?error=confirmation_failed`.
+
 ## Проверки
 
 ```bash
