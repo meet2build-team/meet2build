@@ -1,9 +1,6 @@
-import { requireUser } from "@/lib/auth";
-
-const noStore = { "Cache-Control": "private, no-store" };
-
-const uuidPattern =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+import { authenticate } from "@/lib/api/auth";
+import { isUuid } from "@/lib/api/request";
+import { errorResponse, internalError, jsonResponse } from "@/lib/api/response";
 
 // Returns one meeting. RLS hides meetings of projects the user is not a
 // member of, so a missing and an inaccessible meeting both return 404.
@@ -11,23 +8,11 @@ export async function GET(
   _request: Request,
   { params }: { params: Promise<{ meetingId: string }> },
 ) {
-  const auth = await requireUser();
-
-  if (!auth) {
-    return Response.json(
-      { error: "Unauthorized" },
-      { status: 401, headers: noStore },
-    );
-  }
+  const auth = await authenticate();
+  if (auth instanceof Response) return auth;
 
   const { meetingId } = await params;
-
-  if (!uuidPattern.test(meetingId)) {
-    return Response.json(
-      { error: "Invalid meeting ID" },
-      { status: 400, headers: noStore },
-    );
-  }
+  if (!isUuid(meetingId)) return errorResponse(400, "Invalid meeting ID");
 
   const { data, error } = await auth.supabase
     .from("meetings")
@@ -35,20 +20,8 @@ export async function GET(
     .eq("id", meetingId)
     .maybeSingle();
 
-  if (error) {
-    console.error("Failed to load meeting", error);
-    return Response.json(
-      { error: "Internal server error" },
-      { status: 500, headers: noStore },
-    );
-  }
+  if (error) return internalError("Failed to load meeting", error);
+  if (!data) return errorResponse(404, "Meeting not found");
 
-  if (!data) {
-    return Response.json(
-      { error: "Meeting not found" },
-      { status: 404, headers: noStore },
-    );
-  }
-
-  return Response.json(data, { headers: noStore });
+  return jsonResponse(data);
 }

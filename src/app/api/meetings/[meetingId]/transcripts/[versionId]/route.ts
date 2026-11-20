@@ -1,9 +1,6 @@
-import { requireUser } from "@/lib/auth";
-
-const noStore = { "Cache-Control": "private, no-store" };
-
-const uuidPattern =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+import { authenticate } from "@/lib/api/auth";
+import { isUuid } from "@/lib/api/request";
+import { errorResponse, internalError, jsonResponse } from "@/lib/api/response";
 
 // Returns one transcript version of a meeting with its segments in order.
 // RLS hides versions of meetings the user cannot see, so a missing version,
@@ -12,22 +9,12 @@ export async function GET(
   _request: Request,
   { params }: { params: Promise<{ meetingId: string; versionId: string }> },
 ) {
-  const auth = await requireUser();
-
-  if (!auth) {
-    return Response.json(
-      { error: "Unauthorized" },
-      { status: 401, headers: noStore },
-    );
-  }
+  const auth = await authenticate();
+  if (auth instanceof Response) return auth;
 
   const { meetingId, versionId } = await params;
-
-  if (!uuidPattern.test(meetingId) || !uuidPattern.test(versionId)) {
-    return Response.json(
-      { error: "Invalid meeting or version ID" },
-      { status: 400, headers: noStore },
-    );
+  if (!isUuid(meetingId) || !isUuid(versionId)) {
+    return errorResponse(400, "Invalid meeting or version ID");
   }
 
   const version = await auth.supabase
@@ -40,19 +27,9 @@ export async function GET(
     .maybeSingle();
 
   if (version.error) {
-    console.error("Failed to load transcript version", version.error);
-    return Response.json(
-      { error: "Internal server error" },
-      { status: 500, headers: noStore },
-    );
+    return internalError("Failed to load transcript version", version.error);
   }
-
-  if (!version.data) {
-    return Response.json(
-      { error: "Transcript version not found" },
-      { status: 404, headers: noStore },
-    );
-  }
+  if (!version.data) return errorResponse(404, "Transcript version not found");
 
   const { data, error } = await auth.supabase
     .from("transcript_segments")
@@ -60,16 +37,7 @@ export async function GET(
     .eq("version_id", versionId)
     .order("position", { ascending: true });
 
-  if (error) {
-    console.error("Failed to load transcript segments", error);
-    return Response.json(
-      { error: "Internal server error" },
-      { status: 500, headers: noStore },
-    );
-  }
+  if (error) return internalError("Failed to load transcript segments", error);
 
-  return Response.json(
-    { version: version.data, segments: data },
-    { headers: noStore },
-  );
+  return jsonResponse({ version: version.data, segments: data });
 }

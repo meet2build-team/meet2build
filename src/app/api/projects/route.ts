@@ -1,88 +1,56 @@
-import { requireUser } from "@/lib/auth";
+import { authenticate } from "@/lib/api/auth";
+import { exceedsLength, readJsonObject } from "@/lib/api/request";
+import { errorResponse, internalError, jsonResponse } from "@/lib/api/response";
 
-const noStore = { "Cache-Control": "private, no-store" };
+// Same limit as meeting file names; the database only rejects blank names.
+const maxNameLength = 255;
 
 // Lists the projects the user can see. RLS returns only projects
 // where the user is a member.
 export async function GET() {
-  const auth = await requireUser();
-
-  if (!auth) {
-    return Response.json(
-      { error: "Unauthorized" },
-      { status: 401, headers: noStore },
-    );
-  }
+  const auth = await authenticate();
+  if (auth instanceof Response) return auth;
 
   const { data, error } = await auth.supabase
     .from("projects")
     .select("id, name, created_by, created_at")
     .order("created_at", { ascending: false });
 
-  if (error) {
-    console.error("Failed to list projects", error);
-    return Response.json(
-      { error: "Internal server error" },
-      { status: 500, headers: noStore },
-    );
-  }
+  if (error) return internalError("Failed to list projects", error);
 
-  return Response.json({ projects: data }, { headers: noStore });
+  return jsonResponse({ projects: data });
 }
 
 // Creates a project. The create_project database function inserts the
 // project and makes the caller its owner in one transaction.
 export async function POST(request: Request) {
-  const auth = await requireUser();
+  const auth = await authenticate();
+  if (auth instanceof Response) return auth;
 
-  if (!auth) {
-    return Response.json(
-      { error: "Unauthorized" },
-      { status: 401, headers: noStore },
-    );
+  const body = await readJsonObject(request);
+  if (body instanceof Response) return body;
+
+  const name = typeof body.name === "string" ? body.name.trim() : "";
+
+  if (name === "") {
+    return errorResponse(400, "Project name must be a nonempty string");
   }
-
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return Response.json(
-      { error: "Request body must be valid JSON" },
-      { status: 400, headers: noStore },
-    );
-  }
-
-  const name =
-    typeof body === "object" && body !== null && "name" in body
-      ? body.name
-      : undefined;
-
-  if (typeof name !== "string" || name.trim() === "") {
-    return Response.json(
-      { error: "Project name must be a nonempty string" },
-      { status: 400, headers: noStore },
+  if (exceedsLength(name, maxNameLength)) {
+    return errorResponse(
+      400,
+      `Project name must be at most ${maxNameLength} characters`,
     );
   }
 
   const { data, error } = await auth.supabase.rpc("create_project", {
-    p_name: name.trim(),
+    p_name: name,
   });
 
-  if (error) {
-    // 22023: the database rejected the name.
-    if (error.code === "22023") {
-      return Response.json(
-        { error: "Project name must be a nonempty string" },
-        { status: 400, headers: noStore },
-      );
-    }
-
-    console.error("Failed to create project", error);
-    return Response.json(
-      { error: "Internal server error" },
-      { status: 500, headers: noStore },
-    );
+  // 22023: the database rejected the name.
+  if (error?.code === "22023") {
+    return errorResponse(400, "Project name must be a nonempty string");
   }
+  if (error) return internalError("Failed to create project", error);
 
-  return Response.json(data, { status: 201, headers: noStore });
+  return jsonResponse(data, 201);
 }

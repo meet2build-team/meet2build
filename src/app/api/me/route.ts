@@ -1,19 +1,9 @@
-import { requireUser } from "@/lib/auth";
-
-const noStore = { "Cache-Control": "private, no-store" };
+import { authenticate } from "@/lib/api/auth";
+import { jsonResponse } from "@/lib/api/response";
 
 export async function GET() {
-  const auth = await requireUser();
+  const auth = await authenticate();
+  if (auth instanceof Response) return auth;
 
-  if (!auth) {
-    return Response.json(
-      { error: "Unauthorized" },
-      { status: 401, headers: noStore },
-    );
-  }
-
-  return Response.json(
-    { id: auth.user.id, email: auth.user.email ?? null },
-    { headers: noStore },
-  );
+  return jsonResponse({ id: auth.user.id, email: auth.user.email ?? null });
 }

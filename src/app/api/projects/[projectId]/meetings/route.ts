@@ -1,32 +1,20 @@
-import { requireUser } from "@/lib/auth";
+import { authenticate } from "@/lib/api/auth";
+import { exceedsLength, isUuid, readJsonObject } from "@/lib/api/request";
+import { errorResponse, internalError, jsonResponse } from "@/lib/api/response";
 
-const noStore = { "Cache-Control": "private, no-store" };
-
-const uuidPattern =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// Same limit as project names; the database only rejects blank titles.
+const maxTitleLength = 255;
 
 type Context = { params: Promise<{ projectId: string }> };
 
 // Lists the meetings of a project. RLS hides projects the user is not a
 // member of, so a missing and an inaccessible project both return 404.
 export async function GET(_request: Request, { params }: Context) {
-  const auth = await requireUser();
-
-  if (!auth) {
-    return Response.json(
-      { error: "Unauthorized" },
-      { status: 401, headers: noStore },
-    );
-  }
+  const auth = await authenticate();
+  if (auth instanceof Response) return auth;
 
   const { projectId } = await params;
-
-  if (!uuidPattern.test(projectId)) {
-    return Response.json(
-      { error: "Invalid project ID" },
-      { status: 400, headers: noStore },
-    );
-  }
+  if (!isUuid(projectId)) return errorResponse(400, "Invalid project ID");
 
   const project = await auth.supabase
     .from("projects")
@@ -34,20 +22,8 @@ export async function GET(_request: Request, { params }: Context) {
     .eq("id", projectId)
     .maybeSingle();
 
-  if (project.error) {
-    console.error("Failed to load project", project.error);
-    return Response.json(
-      { error: "Internal server error" },
-      { status: 500, headers: noStore },
-    );
-  }
-
-  if (!project.data) {
-    return Response.json(
-      { error: "Project not found" },
-      { status: 404, headers: noStore },
-    );
-  }
+  if (project.error) return internalError("Failed to load project", project.error);
+  if (!project.data) return errorResponse(404, "Project not found");
 
   const { data, error } = await auth.supabase
     .from("meetings")
@@ -55,88 +31,47 @@ export async function GET(_request: Request, { params }: Context) {
     .eq("project_id", projectId)
     .order("created_at", { ascending: false });
 
-  if (error) {
-    console.error("Failed to list meetings", error);
-    return Response.json(
-      { error: "Internal server error" },
-      { status: 500, headers: noStore },
-    );
-  }
+  if (error) return internalError("Failed to list meetings", error);
 
-  return Response.json({ meetings: data }, { headers: noStore });
+  return jsonResponse({ meetings: data });
 }
 
 // Creates a meeting. The create_meeting database function checks that the
 // caller is a member of the project before inserting.
 export async function POST(request: Request, { params }: Context) {
-  const auth = await requireUser();
-
-  if (!auth) {
-    return Response.json(
-      { error: "Unauthorized" },
-      { status: 401, headers: noStore },
-    );
-  }
+  const auth = await authenticate();
+  if (auth instanceof Response) return auth;
 
   const { projectId } = await params;
+  if (!isUuid(projectId)) return errorResponse(400, "Invalid project ID");
 
-  if (!uuidPattern.test(projectId)) {
-    return Response.json(
-      { error: "Invalid project ID" },
-      { status: 400, headers: noStore },
-    );
+  const body = await readJsonObject(request);
+  if (body instanceof Response) return body;
+
+  const title = typeof body.title === "string" ? body.title.trim() : "";
+
+  if (title === "") {
+    return errorResponse(400, "Meeting title must be a nonempty string");
   }
-
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return Response.json(
-      { error: "Request body must be valid JSON" },
-      { status: 400, headers: noStore },
-    );
-  }
-
-  const title =
-    typeof body === "object" && body !== null && "title" in body
-      ? body.title
-      : undefined;
-
-  if (typeof title !== "string" || title.trim() === "") {
-    return Response.json(
-      { error: "Meeting title must be a nonempty string" },
-      { status: 400, headers: noStore },
+  if (exceedsLength(title, maxTitleLength)) {
+    return errorResponse(
+      400,
+      `Meeting title must be at most ${maxTitleLength} characters`,
     );
   }
 
   const { data, error } = await auth.supabase.rpc("create_meeting", {
     p_project_id: projectId,
-    p_title: title.trim(),
+    p_title: title,
   });
 
-  if (error) {
-    // 42501: the project does not exist or the user is not a member.
-    if (error.code === "42501") {
-      return Response.json(
-        { error: "Project not found" },
-        { status: 404, headers: noStore },
-      );
-    }
-
-    // 22023: the database rejected the title.
-    if (error.code === "22023") {
-      return Response.json(
-        { error: "Meeting title must be a nonempty string" },
-        { status: 400, headers: noStore },
-      );
-    }
-
-    console.error("Failed to create meeting", error);
-    return Response.json(
-      { error: "Internal server error" },
-      { status: 500, headers: noStore },
-    );
+  // 42501: the project does not exist or the user is not a member.
+  if (error?.code === "42501") return errorResponse(404, "Project not found");
+  // 22023: the database rejected the title.
+  if (error?.code === "22023") {
+    return errorResponse(400, "Meeting title must be a nonempty string");
   }
+  if (error) return internalError("Failed to create meeting", error);
 
-  return Response.json(data, { status: 201, headers: noStore });
+  return jsonResponse(data, 201);
 }
