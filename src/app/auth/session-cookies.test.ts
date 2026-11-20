@@ -1,6 +1,8 @@
 import { cookies } from "next/headers";
 import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { POST as signIn } from "@/app/api/auth/sign-in/route";
+import { POST as signOut } from "@/app/api/auth/sign-out/route";
 import { POST as signUp } from "@/app/api/auth/sign-up/route";
 import { GET as confirm } from "@/app/auth/confirm/route";
 
@@ -40,6 +42,35 @@ function respondWith(status: number, body: unknown) {
       });
     }),
   );
+}
+
+// Answers each Supabase Auth endpoint with its own status and body. A null
+// body makes the request fail as if the service were unreachable.
+function respondByPath(responses: Record<string, [number, unknown]>) {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(input instanceof Request ? input.url : input);
+      authRequests.push(url.pathname + url.search);
+
+      const [status, body] = responses[url.pathname] ?? [404, {}];
+      if (body === null) throw new TypeError("fetch failed");
+      return status === 204
+        ? new Response(null, { status })
+        : Response.json(body, {
+            status,
+            headers: { "x-supabase-api-version": "2024-01-01" },
+          });
+    }),
+  );
+}
+
+function signInRequest() {
+  return new Request("http://localhost:3000/api/auth/sign-in", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: "user@example.com", password: "secret123" }),
+  });
 }
 
 // Supabase stores the session in sb-<project>-auth-token, possibly split
@@ -131,6 +162,85 @@ describe("session cookies", () => {
     expect(response.headers.get("Location")).toBe(
       "http://localhost:3000/?error=confirmation_failed",
     );
+    expect(sessionCookies()).toHaveLength(0);
+  });
+
+  it("stores the session after sign-in", async () => {
+    respondByPath({ "/auth/v1/token": [200, session] });
+
+    const response = await signIn(signInRequest());
+
+    expect(response.status).toBe(200);
+    expect(authRequests).toEqual(["/auth/v1/token?grant_type=password"]);
+    expect(sessionCookies()).not.toHaveLength(0);
+    expect(await response.text()).not.toMatch(/access-token|refresh-token/);
+  });
+
+  it("stores no session after a failed sign-in", async () => {
+    respondByPath({
+      "/auth/v1/token": [
+        400,
+        { code: 400, error_code: "invalid_credentials", msg: "Invalid login credentials" },
+      ],
+    });
+
+    expect((await signIn(signInRequest())).status).toBe(401);
+    expect(sessionCookies()).toHaveLength(0);
+  });
+
+  it("removes the session cookies and revokes only the current session", async () => {
+    respondByPath({ "/auth/v1/token": [200, session], "/auth/v1/logout": [204, {}] });
+    await signIn(signInRequest());
+    expect(sessionCookies()).not.toHaveLength(0);
+
+    const response = await signOut();
+
+    expect(response.status).toBe(200);
+    expect(sessionCookies()).toHaveLength(0);
+    expect(authRequests.at(-1)).toBe("/auth/v1/logout?scope=local");
+  });
+
+  it("succeeds without a session and without calling Supabase Auth", async () => {
+    respondByPath({});
+
+    const response = await signOut();
+
+    expect(response.status).toBe(200);
+    expect(authRequests).toEqual([]);
+    expect(sessionCookies()).toHaveLength(0);
+  });
+
+  it("removes an expired session whose refresh token was rejected", async () => {
+    respondByPath({
+      "/auth/v1/token": [200, { ...session, expires_at: Math.floor(Date.now() / 1000) - 60 }],
+    });
+    await signIn(signInRequest());
+    expect(sessionCookies()).not.toHaveLength(0);
+
+    respondByPath({
+      "/auth/v1/token": [
+        400,
+        { code: 400, error_code: "refresh_token_not_found", msg: "Invalid Refresh Token" },
+      ],
+    });
+    const response = await signOut();
+
+    expect(response.status).toBe(200);
+    expect(sessionCookies()).toHaveLength(0);
+    expect(authRequests).toContain("/auth/v1/token?grant_type=refresh_token");
+    expect(authRequests).not.toContain("/auth/v1/logout?scope=local");
+  });
+
+  it("still removes the cookies when Supabase Auth is unreachable", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    respondByPath({ "/auth/v1/token": [200, session] });
+    await signIn(signInRequest());
+
+    respondByPath({ "/auth/v1/logout": [0, null] });
+    const response = await signOut();
+
+    // The revocation could not be confirmed, but this browser is signed out.
+    expect(response.status).toBe(500);
     expect(sessionCookies()).toHaveLength(0);
   });
 });
