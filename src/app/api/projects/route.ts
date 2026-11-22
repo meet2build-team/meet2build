@@ -5,20 +5,27 @@ import { errorResponse, internalError, jsonResponse } from "@/lib/api/response";
 // Same limit as meeting file names; the database only rejects blank names.
 const maxNameLength = 255;
 
-// Lists the projects the user can see. RLS returns only projects
-// where the user is a member.
+// Lists the projects the user can see, with the user's role in each. RLS
+// returns only projects where the user is a member; the join is limited to
+// the user's own membership row, so other members' roles are never read.
 export async function GET() {
   const auth = await authenticate();
   if (auth instanceof Response) return auth;
 
   const { data, error } = await auth.supabase
     .from("projects")
-    .select("id, name, created_by, created_at")
+    .select("id, name, created_by, created_at, project_members!inner(role)")
+    .eq("project_members.user_id", auth.user.id)
     .order("created_at", { ascending: false });
 
   if (error) return internalError("Failed to list projects", error);
 
-  return jsonResponse({ projects: data });
+  const projects = data.map(({ project_members, ...project }) => ({
+    ...project,
+    role: project_members[0].role,
+  }));
+
+  return jsonResponse({ projects });
 }
 
 // Creates a project. The create_project database function inserts the
