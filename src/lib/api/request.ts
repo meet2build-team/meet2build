@@ -7,8 +7,16 @@ const uuidPattern =
 const parameterPattern =
   /^([!#$%&'*+.^_`|~0-9a-z-]+)=([!#$%&'*+.^_`|~0-9a-z-]+|"[^"]*")$/i;
 
+const maxEmailLength = 254;
+const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 export function isUuid(value: unknown): value is string {
   return typeof value === "string" && uuidPattern.test(value);
+}
+
+// A basic syntax check; Supabase Auth and the database validate emails too.
+export function isEmailAddress(value: string) {
+  return !exceedsLength(value, maxEmailLength) && emailPattern.test(value);
 }
 
 // Accepts application/json with optional parameters. JSON is always UTF-8,

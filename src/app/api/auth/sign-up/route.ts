@@ -1,13 +1,11 @@
 import { isAuthApiError } from "@supabase/supabase-js";
-import { exceedsLength, readJsonObject } from "@/lib/api/request";
+import { isEmailAddress, readJsonObject } from "@/lib/api/request";
 import { errorResponse, internalError, jsonResponse } from "@/lib/api/response";
 import { createClient } from "@/lib/supabase/server";
 
 // Matches minimum_password_length in supabase/config.toml. Supabase Auth
 // enforces its own setting as well.
 const minPasswordLength = 6;
-const maxEmailLength = 254;
-const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // New and already registered emails get the same response, so the API never
 // reveals whether an account exists.
@@ -28,7 +26,7 @@ export async function POST(request: Request) {
   if (email === "" || password === "") {
     return errorResponse(400, "Email and password are required");
   }
-  if (exceedsLength(email, maxEmailLength) || !emailPattern.test(email)) {
+  if (!isEmailAddress(email)) {
     return errorResponse(400, "Invalid email address");
   }
   if ([...password].length < minPasswordLength) {

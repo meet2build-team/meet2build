@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   exceedsLength,
+  isEmailAddress,
   isJsonContentType,
   isUuid,
   readJsonObject,
@@ -26,6 +27,24 @@ describe("isUuid", () => {
     expect(isUuid(" 0b9c2b0e-4f1a-4c3e-9d2a-7f6e5d4c3b2a")).toBe(false);
     expect(isUuid(null)).toBe(false);
     expect(isUuid(42)).toBe(false);
+  });
+});
+
+describe("isEmailAddress", () => {
+  it("accepts addresses with a domain", () => {
+    expect(isEmailAddress("user@example.com")).toBe(true);
+    expect(isEmailAddress("first.last+tag@sub.example.org")).toBe(true);
+  });
+
+  it("rejects malformed or overlong addresses", () => {
+    expect(isEmailAddress("")).toBe(false);
+    expect(isEmailAddress("user")).toBe(false);
+    expect(isEmailAddress("user@localhost")).toBe(false);
+    expect(isEmailAddress("a b@example.com")).toBe(false);
+    expect(isEmailAddress("a@b@example.com")).toBe(false);
+    // 254 characters is the limit.
+    expect(isEmailAddress(`${"a".repeat(242)}@example.com`)).toBe(true);
+    expect(isEmailAddress(`${"a".repeat(243)}@example.com`)).toBe(false);
   });
 });
 
