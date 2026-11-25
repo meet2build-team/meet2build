@@ -1,4 +1,5 @@
 import { normalizeTranscription } from "@/lib/audio/normalize-transcription";
+import { requestGroqTranscription } from "@/lib/audio/request-groq-transcription";
 import { requireUser } from "@/lib/auth";
 
 export const maxDuration = 180;
@@ -8,7 +9,6 @@ const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const maxAudioBytes = 25_000_000;
-const groqEndpoint = "https://api.groq.com/openai/v1/audio/transcriptions";
 
 function isUuid(value: unknown): value is string {
   return typeof value === "string" && uuidPattern.test(value);
@@ -78,9 +78,12 @@ export async function POST(
     return fail(400, "Invalid transcription language");
   }
 
+  const timeoutMs = 170_000;
+  const deadline = Date.now() + timeoutMs;
+
   const signal = AbortSignal.any([
     request.signal,
-    AbortSignal.timeout(170_000),
+    AbortSignal.timeout(timeoutMs),
   ]);
 
   try {
@@ -142,15 +145,16 @@ export async function POST(
     form.append("timestamp_granularities[]", "segment");
     if (language !== undefined) form.set("language", language);
 
-    const groqResponse = await fetch(groqEndpoint, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${apiKey}` },
-      body: form,
-      redirect: "error",
+    const groqResponse = await requestGroqTranscription(
+      form,
+      apiKey,
       signal,
-    }).catch(() => null);
+      deadline,
+    );
 
-    if (signal.aborted) return fail(504, "Transcription timed out");
+    if (signal.aborted || Date.now() >= deadline) {
+      return fail(504, "Transcription timed out");
+    }
     if (!groqResponse?.ok) {
       return fail(
         groqResponse?.status === 429 ? 503 : 502,
