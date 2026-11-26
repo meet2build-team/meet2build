@@ -1,15 +1,19 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { translateApiError } from "@/lib/error-messages";
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export function LoginForm() {
+  const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [isSending, setIsSending] = useState(false);
 
-  function handleSubmit() {
+  async function handleSubmit() {
     const trimmedEmail = email.trim();
 
     if (trimmedEmail === "" || password === "") {
@@ -26,7 +30,27 @@ export function LoginForm() {
     }
 
     setError("");
-    // Next step: send the email and password to /api/auth/sign-in.
+    setIsSending(true);
+
+    try {
+      const response = await fetch("/api/auth/sign-in", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: trimmedEmail, password }),
+      });
+
+      if (response.ok) {
+        router.push("/projects");
+        return;
+      }
+
+      const body = await response.json().catch(() => null);
+      setError(translateApiError(body?.error));
+    } catch {
+      setError("Няма връзка със сървъра. Опитай пак.");
+    }
+
+    setIsSending(false);
   }
 
   return (
@@ -70,9 +94,10 @@ export function LoginForm() {
 
       <button
         type="submit"
-        className="mt-2 rounded-lg bg-foreground py-2.5 font-medium text-background transition hover:bg-foreground/85"
+        disabled={isSending}
+        className="mt-2 rounded-lg bg-foreground py-2.5 font-medium text-background transition hover:bg-foreground/85 disabled:cursor-not-allowed disabled:opacity-60"
       >
-        Влез
+        {isSending ? "Влизане..." : "Влез"}
       </button>
     </form>
   );
