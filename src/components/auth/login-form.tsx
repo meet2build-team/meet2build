@@ -2,9 +2,8 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { checkCredentials } from "@/lib/credentials";
 import { translateApiError } from "@/lib/error-messages";
-
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export function LoginForm() {
   const router = useRouter();
@@ -15,17 +14,9 @@ export function LoginForm() {
 
   async function handleSubmit() {
     const trimmedEmail = email.trim();
-
-    if (trimmedEmail === "" || password === "") {
-      setError("Попълни имейл и парола.");
-      return;
-    }
-    if (!EMAIL_PATTERN.test(trimmedEmail)) {
-      setError("Имейлът не е валиден.");
-      return;
-    }
-    if (password.length < 6) {
-      setError("Паролата трябва да е поне 6 знака.");
+    const problem = checkCredentials(trimmedEmail, password);
+    if (problem) {
+      setError(problem);
       return;
     }
 
